@@ -1,5 +1,5 @@
 """
-Beam - A SaaS-ready wrapper for Frappe Bench
+Beam - A SaaS-ready application management tool
 """
 
 __version__ = "1.0.0"

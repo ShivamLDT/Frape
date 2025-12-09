@@ -6,7 +6,55 @@ import subprocess
 import shutil
 import platform
 import os
+import re
 from pathlib import Path
+
+
+def filter_output(text):
+    """Replace frappe/bench references with beam in output text"""
+    if not text:
+        return text
+    
+    # Replacements - case sensitive patterns
+    replacements = [
+        # URLs and paths - preserve structure but rebrand
+        (r'frappe-bench', 'beam'),
+        (r'frappe_bench', 'beam'),
+        
+        # Common phrases
+        (r'Frappe Framework', 'Beam Framework'),
+        (r'frappe framework', 'beam framework'),
+        (r'Frappe Bench', 'Beam'),
+        (r'frappe bench', 'beam'),
+        (r'frappe-bench', 'beam'),
+        
+        # Standalone words (case variations)
+        (r'\bFrappe\b', 'Beam'),
+        (r'\bfrappe\b', 'beam'),
+        (r'\bBench\b', 'Beam'),
+        (r'\bbench\b', 'beam'),
+        
+        # Command references
+        (r"'bench'", "'beam'"),
+        (r'"bench"', '"beam"'),
+        (r'`bench`', '`beam`'),
+        (r"'frappe'", "'beam'"),
+        (r'"frappe"', '"beam"'),
+        (r'`frappe`', '`beam`'),
+    ]
+    
+    result = text
+    for pattern, replacement in replacements:
+        result = re.sub(pattern, replacement, result)
+    
+    return result
+
+
+def print_filtered(text, file=None):
+    """Print text with frappe/bench references replaced"""
+    if text:
+        filtered = filter_output(text)
+        print(filtered, end='', file=file or sys.stdout)
 
 
 def is_git_bash():
@@ -190,11 +238,11 @@ def run_in_wsl(args):
             )
             return 1
         
-        # Print output
+        # Print filtered output (replace frappe/bench with beam)
         if result.stdout:
-            print(result.stdout, end='')
+            print_filtered(result.stdout)
         if result.stderr:
-            print(result.stderr, end='', file=sys.stderr)
+            print_filtered(result.stderr, file=sys.stderr)
         
         return result.returncode
         
@@ -213,10 +261,10 @@ def ensure_bench_installed():
     bench_path = shutil.which("bench")
     if not bench_path:
         print(
-            "Error: 'bench' command not found.\n"
-            "Please install frappe-bench first:\n"
+            "Error: Beam core dependencies not found.\n"
+            "Please install beam dependencies first:\n"
             "  pip install frappe-bench\n\n"
-            "Or if you're developing beam, install it with bench as a dependency.",
+            "Or reinstall beam with all dependencies.",
             file=sys.stderr
         )
         sys.exit(1)
@@ -275,9 +323,21 @@ def forward_to_bench(args):
     # Build bench command (hidden from user - they only see beam)
     bench_cmd = ["bench"] + args
     
-    # Execute bench with same arguments, preserving exit codes
+    # Execute bench with output capture so we can filter it
     try:
-        result = subprocess.run(bench_cmd, check=False)
+        result = subprocess.run(
+            bench_cmd,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        # Print filtered output (replace frappe/bench with beam)
+        if result.stdout:
+            print_filtered(result.stdout)
+        if result.stderr:
+            print_filtered(result.stderr, file=sys.stderr)
+        
         return result.returncode
     except KeyboardInterrupt:
         # Handle Ctrl+C gracefully
@@ -285,7 +345,7 @@ def forward_to_bench(args):
     except ModuleNotFoundError as e:
         if "pwd" in str(e) or "Unix" in str(e):
             print(
-                "\n❌ Error: Bench requires Unix-like system (Linux/macOS/WSL)\n"
+                "\n❌ Error: Beam requires Unix-like system (Linux/macOS/WSL)\n"
                 "The 'pwd' module is Unix-specific and not available on Windows.\n\n"
                 "If on Windows, beam should automatically use WSL.\n"
                 "If this error persists, ensure WSL is installed: wsl --install",
@@ -295,7 +355,7 @@ def forward_to_bench(args):
             print(f"Error: Missing module - {e}", file=sys.stderr)
         return 1
     except Exception as e:
-        print(f"Error executing bench: {e}", file=sys.stderr)
+        print(f"Error executing beam: {e}", file=sys.stderr)
         return 1
 
 
@@ -355,7 +415,7 @@ def show_beam_help():
 
 """
     
-    help_text = f"""Beam - SaaS-Ready Frappe Management Tool
+    help_text = f"""Beam - SaaS-Ready Application Management Tool
 {windows_note}Usage:
     beam [command] [options]
 
