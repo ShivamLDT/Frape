@@ -7,6 +7,7 @@ import shutil
 import platform
 import os
 import re
+import threading
 from pathlib import Path
 
 
@@ -195,18 +196,65 @@ def run_in_wsl(args):
         # Fallback: try just "beam" (might be in PATH)
         wsl_cmd = ["wsl", "-d", "Ubuntu", "beam"] + args
     
-    # Execute in WSL
+    # Execute in WSL with real-time streaming output
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             wsl_cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
-            timeout=30
+            bufsize=1  # Line buffered
         )
         
+        # Track output for error detection
+        stderr_lines = []
+        
+        def stream_stdout(pipe):
+            """Stream and filter stdout line by line"""
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        filtered_line = filter_output(line)
+                        print(filtered_line, end='', flush=True)
+            except:
+                pass
+            finally:
+                pipe.close()
+        
+        def stream_stderr(pipe):
+            """Stream and filter stderr line by line, also capture for error detection"""
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        stderr_lines.append(line)
+                        filtered_line = filter_output(line)
+                        print(filtered_line, end='', file=sys.stderr, flush=True)
+            except:
+                pass
+            finally:
+                pipe.close()
+        
+        # Start threads for stdout and stderr
+        stdout_thread = threading.Thread(target=stream_stdout, args=(process.stdout,))
+        stderr_thread = threading.Thread(target=stream_stderr, args=(process.stderr,))
+        
+        stdout_thread.daemon = True
+        stderr_thread.daemon = True
+        stdout_thread.start()
+        stderr_thread.start()
+        
+        # Wait for process to complete
+        return_code = process.wait()
+        
+        # Wait for output threads to finish
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        
+        # Check for specific error conditions after process completes
+        stderr_text = ''.join(stderr_lines)
+        
         # Check for WSL service errors
-        if "Catastrophic failure" in result.stderr or "E_UNEXPECTED" in result.stderr:
+        if "Catastrophic failure" in stderr_text or "E_UNEXPECTED" in stderr_text:
             print(
                 "\n❌ WSL Service Error\n"
                 "WSL is having issues. Try these steps:\n\n"
@@ -220,8 +268,7 @@ def run_in_wsl(args):
             return 1
         
         # If beam command not found, provide helpful message
-        if result.returncode != 0 and ("not found" in result.stderr.lower() or "command not found" in result.stderr.lower()):
-            # Beam not installed in WSL - provide helpful message
+        if return_code != 0 and ("not found" in stderr_text.lower() or "command not found" in stderr_text.lower()):
             print(
                 "\n❌ Beam Not Found in WSL\n"
                 "Beam needs to be installed in WSL to work from PowerShell.\n\n"
@@ -238,18 +285,12 @@ def run_in_wsl(args):
             )
             return 1
         
-        # Print filtered output (replace frappe/bench with beam)
-        if result.stdout:
-            print_filtered(result.stdout)
-        if result.stderr:
-            print_filtered(result.stderr, file=sys.stderr)
+        return return_code
         
-        return result.returncode
-        
-    except subprocess.TimeoutExpired:
-        print("Error: Command timed out in WSL", file=sys.stderr)
-        return 1
     except KeyboardInterrupt:
+        if 'process' in locals():
+            process.terminate()
+            process.wait()
         return 130
     except Exception as e:
         print(f"Error running in WSL: {e}", file=sys.stderr)
@@ -323,24 +364,50 @@ def forward_to_bench(args):
     # Build bench command (hidden from user - they only see beam)
     bench_cmd = ["bench"] + args
     
-    # Execute bench with output capture so we can filter it
+    # Execute bench with real-time output streaming and filtering
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             bench_cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False
+            bufsize=1  # Line buffered
         )
         
-        # Print filtered output (replace frappe/bench with beam)
-        if result.stdout:
-            print_filtered(result.stdout)
-        if result.stderr:
-            print_filtered(result.stderr, file=sys.stderr)
+        def stream_output(pipe, output_file):
+            """Stream and filter output line by line"""
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        filtered_line = filter_output(line)
+                        print(filtered_line, end='', file=output_file, flush=True)
+            except:
+                pass
+            finally:
+                pipe.close()
         
-        return result.returncode
+        # Start threads for stdout and stderr
+        stdout_thread = threading.Thread(target=stream_output, args=(process.stdout, sys.stdout))
+        stderr_thread = threading.Thread(target=stream_output, args=(process.stderr, sys.stderr))
+        
+        stdout_thread.daemon = True
+        stderr_thread.daemon = True
+        stdout_thread.start()
+        stderr_thread.start()
+        
+        # Wait for process to complete
+        return_code = process.wait()
+        
+        # Wait for output threads to finish
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        
+        return return_code
     except KeyboardInterrupt:
         # Handle Ctrl+C gracefully
+        if 'process' in locals():
+            process.terminate()
+            process.wait()
         return 130
     except ModuleNotFoundError as e:
         if "pwd" in str(e) or "Unix" in str(e):
